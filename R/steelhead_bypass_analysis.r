@@ -3,6 +3,8 @@
 ## For model fitting in support of:
 ## Faulkner, JR, BL Bellerud, DL Widener, and RW Zabel. 2019. Associations among fish length, dam passage history, and survival to adulthood in two at-risk species of Pacific salmon.
 
+     
+  
 
 library(lme4)
 
@@ -23,8 +25,6 @@ sdat$fyear <- as.character(sdat$year)
 
 
 
-
-
 ###----------------------------------------------------------------------------------------
 ##            Model Fitting
 ###----------------------------------------------------------------------------------------
@@ -33,7 +33,7 @@ sdat$fyear <- as.character(sdat$year)
 ### ----  Functions ---------------------------------
 
 # function to fit a set of models and output to a list
-fitModels <- function(modset, respname, data, subset){
+fitModels <- function(modset, respname, data, subset=NULL){
   nm <- length(modset)
   convec <- numeric(nm)
   outlist <- list()
@@ -42,7 +42,10 @@ fitModels <- function(modset, respname, data, subset){
     tmp.form <- formula(paste(respname, "~ ", modset[kk] ))
     tmp.fit <- glmer(tmp.form, family=binomial, data=data, subset=subset, control=glmerControl(optCtrl=list(maxfun=2e5)) )
     if (length(tmp.fit@optinfo$conv$lme4)==0) convec[kk] <- 0
-    if (length(tmp.fit@optinfo$conv$lme4)!=0) convec[kk] <- tmp.fit@optinfo$conv$lme4$code
+    if (length(tmp.fit@optinfo$conv$lme4)!=0) {
+			if (length(grep(x=tmp.fit@optinfo$conv$lme4$messages, pattern="singular"))==1) convec[kk] <- 1
+			if (length(grep(x=tmp.fit@optinfo$conv$lme4$messages, pattern="singular"))==0) convec[kk] <- tmp.fit@optinfo$conv$lme4$code
+		}
     outlist[[kk]] <- tmp.fit 
     # if did not converge, try to refit from new start
     if (convec[kk]!=0) {
@@ -50,7 +53,10 @@ fitModels <- function(modset, respname, data, subset){
       tmp.ss <- getME(tmp.fit,c("theta","fixef"))
       tmp.fit2 <- update(tmp.fit,start=tmp.ss,control=glmerControl(optCtrl=list(maxfun=2e5)) )
       if (length(tmp.fit2@optinfo$conv$lme4)==0) convec[kk] <- 0
-      if (length(tmp.fit2@optinfo$conv$lme4)!=0) convec[kk] <- tmp.fit2@optinfo$conv$lme4$code
+	    if (length(tmp.fit2@optinfo$conv$lme4)!=0) {
+				if (length(grep(x=tmp.fit2@optinfo$conv$lme4$messages, pattern="singular"))==1) convec[kk] <- 1
+				if (length(grep(x=tmp.fit2@optinfo$conv$lme4$messages, pattern="singular"))==0)	convec[kk] <- tmp.fit2@optinfo$conv$lme4$code
+			}
       outlist[[kk]] <- tmp.fit2 
     }
     # if still did not converge, try to refit with different optimizer
@@ -59,7 +65,10 @@ fitModels <- function(modset, respname, data, subset){
       tmp.ss2 <- getME(tmp.fit2,c("theta","fixef"))
       tmp.fit3 <- update(tmp.fit2,start=tmp.ss2,control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
       if (length(tmp.fit3@optinfo$conv$lme4)==0) convec[kk] <- 0
-      if (length(tmp.fit3@optinfo$conv$lme4)!=0) convec[kk] <- tmp.fit3@optinfo$conv$lme4$code
+	    if (length(tmp.fit3@optinfo$conv$lme4)!=0) {
+				if (length(grep(x=tmp.fit3@optinfo$conv$lme4$messages, pattern="singular"))==1) convec[kk] <- 1
+				if (length(grep(x=tmp.fit3@optinfo$conv$lme4$messages, pattern="singular"))==0)	convec[kk] <- tmp.fit3@optinfo$conv$lme4$code
+			}
       outlist[[kk]] <- tmp.fit3 
     }
     if (convec[kk]!=0) cat("2nd re-fit of model ", kk, " failed!", "\n" )
@@ -71,10 +80,15 @@ fitModels <- function(modset, respname, data, subset){
 
 
 ## Function to create table of AIC ranks and other stats
-getAICsummary <- function(fit.list, mod.list, modnums=NULL) {
-  nmod <- length(fit.list)-1
-  if (is.null(modnums)) modnums <- 1:nmod
-  aicv1 <- as.vector((sapply(fit.list[1:nmod], FUN=extractAIC))[2,])  #extract aic
+getAICsummary <- function(fit.list, mod.list, subset=NULL) {
+	nmod <- length(fit.list)-1
+	modnums <- 1:nmod
+	if (!is.null(subset)) {
+		modnums <- modnums[subset]
+		nmod <- length(modnums)
+		mod.list <- mod.list[subset]
+	}
+	aicv1 <- as.vector((sapply(fit.list[modnums], FUN=extractAIC))[2,])   #extract aic
   minaic1 <- min(aicv1)	#min aic
   delta1 <- aicv1 - minaic1	#delta aic
   mod.lik1 <- exp(-0.5*delta1)	#likelihood of model
@@ -89,6 +103,8 @@ getAICsummary <- function(fit.list, mod.list, modnums=NULL) {
   aicout1 <- aicout1[order(aicout1$Rank), ]  #resort by rank
   return(aicout1)
 }
+
+
 
 # function for extracting odds ratio and CI for single fixed effect from logistic regression
 extractCI <- function(modsum, varname, scale="odds", alpha=0.05){
@@ -105,131 +121,120 @@ extractCI <- function(modsum, varname, scale="odds", alpha=0.05){
 
 
 
+
+
 #### -------  Model Formulas ---------------------------
 
 ### Variable shorthand
 # Y = random effect for migration year
 # C = reartype (clipped or not)
-# R = release site 
+# S = release site 
 # G = day at Lower Granite 
 # G2 = G squared
-# W = week at Lower Granite
 # D = day at Bonneville or Trawl
 # D2 = D squared
 # L = length
 
 
-### Possible covariate-only models
-# notes: all models have Y and 
-#   any G, W, or D variable cannot occur together (only one set of time variables)
-# All models are constructed separately by reartype and Dam
+### Possible models models
+# notes: - all models have Y and C and S 
+#        - G variables only occur in Snake River models and D variables only occur in Columbia River models
+#        - All models are constructed separately by Dam
 
-# 1) Y
-# 2) Y + R
-# 3) Y + G
-# 4) Y + G + G2
-# 5) Y + R + G
-# 6) Y + R + G + G2
-# 7) Y + G + Y*G
-# 8) Y + G + G2 + Y*G
-# 9) Y + G + G2 + Y*G + Y*G2
-# 10) Y + R + G + Y*G
-# 11) Y + R + G + G2 + Y*G
-# 12) Y + R + G + G2 + Y*G + Y*G2
-# 13) Y + D
-# 14) Y + D + D2
-# 15) Y + R + D
-# 16) Y + R + D + D2
-# 17) Y + D + Y*D
-# 18) Y + D + D2 + Y*D
-# 19) Y + D + D2 + Y*D + Y*D2
-# 20) Y + R + D + Y*D
-# 21) Y + R + D + D2 + Y*D
-# 22) Y + R + D + D2 + Y*D + Y*D2
-# 23) Y + W
-# 24) Y + R + W
-# 25) Y + W + Y*W
-# 26) Y + R + W + Y*W
+
+# Snake models
+# 1) Y + C + S
+# 2) Y + C + S + G
+# 3) Y + C + S + G + G2
+# 4) Y + C + S + G + Y*G
+# 5) Y + C + S + G + G2 + Y*G
+# 6) Y + C + S + G + G2 + Y*G + Y*G2
+
+
+
+# Columbia models
+# 2) Y + C + S
+# 5) Y + C + S + D
+# 6) Y + C + S + D + D2
+# 10) Y + C + S + D + Y*D
+# 11) Y + C + S + D + D2 + Y*D
+# 12) Y + C + S + D + D2 + Y*D + Y*D2
 
 
 
 
-covsets <- c("(1 | fyear)",
-             "rel_site2 + (1 | fyear)",
-             "zday_lgr + (1 | fyear)",
-             "zday_lgr + zday_lgr_sq + (1 | fyear)",
-             "rel_site2 + zday_lgr + (1 | fyear)",
-             "rel_site2 + zday_lgr + zday_lgr_sq + (1 | fyear)", 
-             "zday_lgr + (zday_lgr | fyear)",
-             "zday_lgr + zday_lgr_sq + (zday_lgr | fyear)",
-             "zday_lgr + zday_lgr_sq + (zday_lgr + zday_lgr_sq | fyear)", 
-             "rel_site2 + zday_lgr + (zday_lgr | fyear)",
-             "rel_site2 + zday_lgr + zday_lgr_sq + (zday_lgr | fyear)",
-             "rel_site2 + zday_lgr + zday_lgr_sq + (zday_lgr + zday_lgr_sq | fyear)",  
-             "zlast_day + (1 | fyear)",
-             "zlast_day + zlast_day_sq + (1 | fyear)",
-             "rel_site2 + zlast_day + (1 | fyear)",
-             "rel_site2 + zlast_day + zlast_day_sq + (1 | fyear)", 
-             "zlast_day + (zlast_day | fyear)",
-             "zlast_day + zlast_day_sq + (zlast_day | fyear)",
-             "zlast_day + zlast_day_sq + (zlast_day + zlast_day_sq | fyear)", 
-             "rel_site2 + zlast_day + (zlast_day | fyear)",
-             "rel_site2 + zlast_day + zlast_day_sq + (zlast_day | fyear)",
-             "rel_site2 + zlast_day + zlast_day_sq + (zlast_day + zlast_day_sq | fyear)", 
-             "rel_week_lgr + (1 | fyear)",
-             "rel_site2 + rel_week_lgr + (1 | fyear)",
-             "rel_week_lgr + (rel_week_lgr | fyear)",
-             "rel_site2 + rel_week_lgr + (rel_week_lgr | fyear)" )
+### --- Models Without Length
 
-cov.modnums <- 1:length(covsets)
+## Snake models
+modsets.sr1 <- c("clipped + rel_site2 + (1 | fyear)",
+"clipped + rel_site2 + zday_lgr + (1 | fyear)",
+"clipped + rel_site2 + zday_lgr + zday_lgr_sq + (1 | fyear)", 
+"clipped + rel_site2 + zday_lgr + (zday_lgr | fyear)",
+"clipped + rel_site2 + zday_lgr + zday_lgr_sq + (zday_lgr | fyear)",
+"clipped + rel_site2 + zday_lgr + zday_lgr_sq + (zday_lgr + zday_lgr_sq | fyear)")
 
-testsets <- "zlength"
+
+# Columbia models
+modsets.cr1 <- c("clipped + rel_site2 + (1 | fyear)",
+"clipped + rel_site2 + zlast_day + (1 | fyear)",
+"clipped + rel_site2 + zlast_day + zlast_day_sq + (1 | fyear)", 
+"clipped + rel_site2 + zlast_day + (zlast_day | fyear)",
+"clipped + rel_site2 + zlast_day + zlast_day_sq + (zlast_day | fyear)",
+"clipped + rel_site2 + zlast_day + zlast_day_sq + (zlast_day + zlast_day_sq | fyear)" )
+
+
+### --- Models With Length
+modsets.sr <- paste("zlength +", modsets.sr1)
+modsets.cr <- paste("zlength +", modsets.cr1)
+
+
+
+nmods <- length(modsets.sr)
+modnums <- 1:nmods
 
 respsets <- c("bypass_LGR", "bypass_LGS", "bypass_LMN", "bypass_IHR", "bypass_MCN", "bypass_JDA", "bypass_BON", "bypass_BON")
 
 damsets <- c("LGR", "LGS", "LMN", "IHR", "MCN", "JDA", "BON", "BCC")
 
-subsets <- list(sdat$rel_site2!="LGR", sdat$last_site=="twx", (sdat$bypass_BON==1 | sdat$pass_BCC==1) & sdat$fyear %in% as.character(2006:2014))
+#subsets <- list(sdat$rel_site2!="LGR", sdat$last_site=="twx" & sdat$fyear!="2001", (sdat$bypass_BON==1 | sdat$pass_BCC==1) & sdat$fyear %in% as.character(2006:2014))
+subsets <- list(sdat$rel_site2!="LGR", sdat$last_site=="twx" , (sdat$bypass_BON==1 | sdat$pass_BCC==1) & sdat$fyear %in% as.character(2006:2014))
 
 
-nmods.cov <- length(covsets)
+nmods.cov <- length(modsets.sr)
 
 
 
-###-----------------------------------------------------------------------
-##               Wild Fish (unclipped)
-###-----------------------------------------------------------------------
 
 ###--------------------------------------------------
 ##        Lower Granite Dam 
 ###--------------------------------------------------
 
 idam <- which(damsets=="LGR")
-# -------   Fit covariate-only models -------------------------------------
 
-modfits.cov.lgr.w <- fitModels(covsets, respsets[idam], sdat, subsets[[1]] & sdat$clipped=="b. no")
+# -------   Fit models with length -------------------------------------
+modfits.lgr <- fitModels(modsets.sr, respsets[idam], sdat, subsets[[1]])
 
 # check if any models did not converge (any non-zero)
-modfits.cov.lgr.w$converge
+modfits.lgr$converge 
 # all are fine
 
 # Calculate AIC
-aicsum.cov.lgr.w <- getAICsummary(modfits.cov.lgr.w, covsets)
-aicsum.cov.lgr.w
+aicsum.lgr <- getAICsummary(modfits.lgr, modsets.sr, subset = modfits.lgr$converge==0 )
+aicsum.lgr
 
 # find best model
-bestmod.cov.lgr.w <- aicsum.cov.lgr.w$Model[1]
-
-# -------   Fit model with length -------------------------------------
-
-tmpset <- paste("zlength +", covsets[bestmod.cov.lgr.w])
-modfit.len.lgr.w <- fitModels(tmpset, respsets[idam], sdat, subsets[[1]] & sdat$clipped=="b. no")
-modfit.len.lgr.w$converge
-
-modsum.len.lgr.w <- summary(modfit.len.lgr.w[[1]])
-modsum.len.lgr.w
+bestmod.lgr <- aicsum.lgr$Model[1]
+modfit.best.lgr <- modfits.lgr[[bestmod.lgr]]
+modsum.best.lgr <- summary(modfit.best.lgr)
+modsum.best.lgr
 
 
+# -------   Fit best model without length -------------------------------------
+tmpset <- modsets.sr1[bestmod.lgr]
+modfit.nolen.lgr <- fitModels(tmpset, respsets[idam], sdat, subsets[[1]])
+modfit.nolen.lgr$converge
+modsum.nolen.lgr <- summary(modfit.nolen.lgr[[1]])
+modsum.nolen.lgr
 
 
 
@@ -239,26 +244,32 @@ modsum.len.lgr.w
 ###--------------------------------------------------
 
 idam <- which(damsets=="LGS")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.lgs.w <- fitModels(covsets, respsets[idam], sdat, sdat$clipped=="b. no")
+
+# -------   Fit models with length -------------------------------------
+modfits.lgs <- fitModels(modsets.sr, respsets[idam], sdat)
 
 # check if any models did not converge (any non-zero)
-modfits.cov.lgs.w$converge
+modfits.lgs$converge 
 # all are fine
 
 # Calculate AIC
-aicsum.cov.lgs.w <- getAICsummary(modfits.cov.lgs.w, covsets)
-aicsum.cov.lgs.w
+aicsum.lgs <- getAICsummary(modfits.lgs, modsets.sr, subset = modfits.lgs$converge==0)
+aicsum.lgs
 
 # find best model
-bestmod.cov.lgs.w <- aicsum.cov.lgs.w$Model[1]
+bestmod.lgs <- aicsum.lgs$Model[1]
+modfit.best.lgs <- modfits.lgs[[bestmod.lgs]]
+modsum.best.lgs <- summary(modfit.best.lgs)
+modsum.best.lgs
 
-# -------   Fit model with length -------------------------------------
-tmpset <- paste("zlength +", covsets[bestmod.cov.lgs.w])
-modfit.len.lgs.w <- fitModels(tmpset, respsets[idam], sdat, sdat$clipped=="b. no")
-modfit.len.lgs.w$converge
-modsum.len.lgs.w <- summary(modfit.len.lgs.w[[1]])
-modsum.len.lgs.w
+# -------   Fit best model without length -------------------------------------
+tmpset <- modsets.sr1[bestmod.lgs]
+modfit.nolen.lgs <- fitModels(tmpset, respsets[idam], sdat)
+modfit.nolen.lgs$converge
+modsum.nolen.lgs <- summary(modfit.nolen.lgs[[1]])
+modsum.nolen.lgs
+
+
 
 
 
@@ -268,27 +279,30 @@ modsum.len.lgs.w
 ###--------------------------------------------------
 
 idam <- which(damsets=="LMN")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.lmn.w <- fitModels(covsets, respsets[idam], sdat, sdat$clipped=="b. no")
+
+# -------   Fit models with length -------------------------------------
+modfits.lmn <- fitModels(modsets.sr, respsets[idam], sdat)
 
 # check if any models did not converge (any non-zero)
-modfits.cov.lmn.w$converge
+modfits.lmn$converge
 # all are fine
 
 # Calculate AIC
-aicsum.cov.lmn.w <- getAICsummary(modfits.cov.lmn.w, covsets)
-aicsum.cov.lmn.w
+aicsum.lmn <- getAICsummary(modfits.lmn, modsets.sr, subset = modfits.lmn$converge==0 )
+aicsum.lmn
 
 # find best model
-bestmod.cov.lmn.w <- aicsum.cov.lmn.w$Model[1]
+bestmod.lmn <- aicsum.lmn$Model[1]
+modfit.best.lmn <- modfits.lmn[[bestmod.lmn]]
+modsum.best.lmn <- summary(modfit.best.lmn)
+modsum.best.lmn
 
-# -------   Fit model with length -------------------------------------
-
-tmpset <- paste("zlength +", covsets[bestmod.cov.lmn.w])
-modfit.len.lmn.w <- fitModels(tmpset, respsets[idam], sdat, sdat$clipped=="b. no")
-modfit.len.lmn.w$converge
-modsum.len.lmn.w <- summary(modfit.len.lmn.w[[1]])
-modsum.len.lmn.w
+# -------   Fit best model without length -------------------------------------
+tmpset <- modsets.sr1[bestmod.lmn]
+modfit.nolen.lmn <- fitModels(tmpset, respsets[idam], sdat)
+modfit.nolen.lmn$converge
+modsum.nolen.lmn <- summary(modfit.nolen.lmn[[1]])
+modsum.nolen.lmn
 
 
 
@@ -298,27 +312,31 @@ modsum.len.lmn.w
 ###--------------------------------------------------
 
 idam <- which(damsets=="IHR")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.ihr.w <- fitModels(covsets, respsets[idam], sdat, sdat$clipped=="b. no" & sdat$fyear %in% as.character(2005:2014))
+
+# -------   Fit models with length -------------------------------------
+modfits.ihr <- fitModels(modsets.sr, respsets[idam], sdat, sdat$fyear %in% as.character(2005:2014))
 
 # check if any models did not converge (any non-zero)
-modfits.cov.ihr.w$converge 
-# all are fine 
+modfits.ihr$converge 
 
 # Calculate AIC
-aicsum.cov.ihr.w <- getAICsummary(modfits.cov.ihr.w, covsets)
-aicsum.cov.ihr.w
+aicsum.ihr <- getAICsummary(modfits.ihr, modsets.sr, subset = modfits.ihr$converge==0)
+aicsum.ihr
 
 # find best model
-bestmod.cov.ihr.w <- aicsum.cov.ihr.w$Model[1]
+bestmod.ihr <- aicsum.ihr$Model[1]
+modfit.best.ihr <- modfits.ihr[[bestmod.ihr]]
+modsum.best.ihr <- summary(modfit.best.ihr)
+modsum.best.ihr
 
-# -------   Fit model with length -------------------------------------
 
-tmpset <- paste("zlength +", covsets[bestmod.cov.ihr.w])
-modfit.len.ihr.w <- fitModels(tmpset, respsets[idam], sdat, sdat$clipped=="b. no" & sdat$fyear %in% as.character(2005:2014))
-modfit.len.ihr.w$converge
-modsum.len.ihr.w <- summary(modfit.len.ihr.w[[1]])
-modsum.len.ihr.w
+# -------   Fit best model without length -------------------------------------
+tmpset <- modsets.sr1[bestmod.ihr]
+modfit.nolen.ihr <- fitModels(tmpset, respsets[idam], sdat, sdat$fyear %in% as.character(2005:2014))
+modfit.nolen.ihr$converge
+modsum.nolen.ihr <- summary(modfit.nolen.ihr[[1]])
+modsum.nolen.ihr
+
 
 
 
@@ -327,27 +345,34 @@ modsum.len.ihr.w
 ###--------------------------------------------------
 
 idam <- which(damsets=="MCN")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.mcn.w <- fitModels(covsets, respsets[idam], sdat, sdat$clipped=="b. no")
+
+# -------   Fit models with length -------------------------------------
+modfits.mcn <- fitModels(modsets.cr, respsets[idam], sdat)
 
 # check if any models did not converge (any non-zero)
-modfits.cov.mcn.w$converge 
+modfits.mcn$converge 
 # all are fine
 
 # Calculate AIC
-aicsum.cov.mcn.w <- getAICsummary(modfits.cov.mcn.w, covsets)
-aicsum.cov.mcn.w
+aicsum.mcn <- getAICsummary(modfits.mcn, modsets.cr, subset = modfits.mcn$converge==0 )
+aicsum.mcn
 
 # find best model
-bestmod.cov.mcn.w <- aicsum.cov.mcn.w$Model[1]
+bestmod.mcn <- aicsum.mcn$Model[1]
+modfit.best.mcn <- modfits.mcn[[bestmod.mcn]]
+modsum.best.mcn <- summary(modfit.best.mcn)
+modsum.best.mcn
 
-# -------   Fit model with length -------------------------------------
 
-tmpset <- paste("zlength +", covsets[bestmod.cov.mcn.w])
-modfit.len.mcn.w <- fitModels(tmpset, respsets[idam], sdat, sdat$clipped=="b. no")
-modfit.len.mcn.w$converge
-modsum.len.mcn.w <- summary(modfit.len.mcn.w[[1]])
-modsum.len.mcn.w
+# -------   Fit best model without length -------------------------------------
+tmpset <- modsets.cr1[bestmod.mcn]
+modfit.nolen.mcn <- fitModels(tmpset, respsets[idam], sdat)
+modfit.nolen.mcn$converge
+
+modsum.nolen.mcn <- summary(modfit.nolen.mcn[[1]])
+modsum.nolen.mcn
+
+
 
 
 ###--------------------------------------------------
@@ -355,27 +380,32 @@ modsum.len.mcn.w
 ###--------------------------------------------------
 
 idam <- which(damsets=="JDA")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.jda.w <- fitModels(covsets, respsets[idam], sdat, sdat$clipped=="b. no")
+
+# -------   Fit models with length -------------------------------------
+modfits.jda <- fitModels(modsets.cr, respsets[idam], sdat)
 
 # check if any models did not converge (any non-zero)
-modfits.cov.jda.w$converge
+modfits.jda$converge 
 # all are fine
 
 # Calculate AIC
-aicsum.cov.jda.w <- getAICsummary(modfits.cov.jda.w, covsets)
-aicsum.cov.jda.w
+aicsum.jda <- getAICsummary(modfits.jda, modsets.cr, subset = modfits.jda$converge==0 )
+aicsum.jda
 
 # find best model
-bestmod.cov.jda.w <- aicsum.cov.jda.w$Model[1]
+bestmod.jda <- aicsum.jda$Model[1]
+modfit.best.jda <- modfits.jda[[bestmod.jda]]
+modsum.best.jda <- summary(modfit.best.jda)
+modsum.best.jda
 
-# -------   Fit model with length -------------------------------------
 
-tmpset <- paste("zlength +", covsets[bestmod.cov.jda.w])
-modfit.len.jda.w <- fitModels(tmpset, respsets[idam], sdat, sdat$clipped=="b. no")
-modfit.len.jda.w$converge
-modsum.len.jda.w <- summary(modfit.len.jda.w[[1]])
-modsum.len.jda.w
+# -------   Fit best model without length -------------------------------------
+tmpset <- modsets.cr1[bestmod.jda]
+modfit.nolen.jda <- fitModels(tmpset, respsets[idam], sdat)
+modfit.nolen.jda$converge
+
+modsum.nolen.jda <- summary(modfit.nolen.jda[[1]])
+modsum.nolen.jda
 
 
 
@@ -384,27 +414,31 @@ modsum.len.jda.w
 ###--------------------------------------------------
 
 idam <- which(damsets=="BON")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.bon.w <- fitModels(covsets, respsets[idam], sdat, subsets[[2]] & sdat$clipped=="b. no")
+
+# -------   Fit models with length -------------------------------------
+modfits.bon <- fitModels(modsets.cr, respsets[idam], sdat, subsets[[2]] )
 
 # check if any models did not converge (any non-zero)
-modfits.cov.bon.w$converge
-# all are fine
+modfits.bon$converge 
+# NOTE: models 4 and 6 fail to converge or are singular 
 
 # Calculate AIC
-aicsum.cov.bon.w <- getAICsummary(modfits.cov.bon.w, covsets)
-aicsum.cov.bon.w
+aicsum.bon <- getAICsummary(modfits.bon, modsets.cr, subset = modfits.bon$converge==0)
+aicsum.bon
 
 # find best model
-bestmod.cov.bon.w <- aicsum.cov.bon.w$Model[1]
+bestmod.bon <- aicsum.bon$Model[1]
+modfit.best.bon <- modfits.bon[[bestmod.bon]]
+modsum.best.bon <- summary(modfit.best.bon)
+modsum.best.bon
 
-# -------   Fit model with length -------------------------------------
 
-tmpset <- paste("zlength +", covsets[bestmod.cov.bon.w])
-modfit.len.bon.w <- fitModels(tmpset, respsets[idam], sdat, subsets[[2]] & sdat$clipped=="b. no")
-modfit.len.bon.w$converge
-modsum.len.bon.w <- summary(modfit.len.bon.w[[1]])
-modsum.len.bon.w
+# -------   Fit best model without length -------------------------------------
+tmpset <- modsets.cr1[bestmod.bon]
+modfit.nolen.bon <- fitModels(tmpset, respsets[idam], sdat, subsets[[2]])
+modfit.nolen.bon$converge
+modsum.nolen.bon <- summary(modfit.nolen.bon[[1]])
+modsum.nolen.bon
 
 
 
@@ -415,31 +449,30 @@ modsum.len.bon.w
 
 
 idam <- which(damsets=="BCC")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.bcc.w <- fitModels(covsets, respsets[idam], sdat, subsets[[3]] & sdat$clipped=="b. no")
+
+# -------   Fit models with length -------------------------------------
+modfits.bcc <- fitModels(modsets.cr, respsets[idam], sdat, subsets[[3]])
 
 # check if any models did not converge (any non-zero)
-modfits.cov.bcc.w$converge 
-# note that last model did not converge
-
-modfits.cov.bcc.w <- modfits.cov.bcc.w[-26]
+modfits.bcc$converge 
+# all are fine
 
 # Calculate AIC
-aicsum.cov.bcc.w <- getAICsummary(modfits.cov.bcc.w, covsets[-26])
-aicsum.cov.bcc.w
+aicsum.bcc <- getAICsummary(modfits.bcc, modsets.cr, subset = modfits.bcc$converge==0 )
+aicsum.bcc
 
 # find best model 
-# NOTE: the best model does not converge when length is added. Therefore use #2 model
-bestmod.cov.bcc.w <- aicsum.cov.bcc.w$Model[1]
+bestmod.bcc <- aicsum.bcc$Model[1]
+modfit.best.bcc <- modfits.bcc[[bestmod.bcc]]
+modsum.best.bcc <- summary(modfit.best.bcc)
+modsum.best.bcc
 
-# -------   Fit model with length -------------------------------------
-
-tmpset <- paste("zlength +", covsets[bestmod.cov.bcc.w])
-modfit.len.bcc.w <- fitModels(tmpset, respsets[idam], sdat, subsets[[3]] & sdat$clipped=="b. no")
-modfit.len.bcc.w$converge
-modsum.len.bcc.w <- summary(modfit.len.bcc.w[[1]])
-modsum.len.bcc.w
-
+# -------   Fit best model without length -------------------------------------
+tmpset <- modsets.cr1[bestmod.bcc]
+modfit.nolen.bcc <- fitModels(tmpset, respsets[idam], sdat, subsets[[3]] )
+modfit.nolen.bcc$converge
+modsum.nolen.bcc <- summary(modfit.nolen.bcc[[1]])
+modsum.nolen.bcc
 
 
 
@@ -452,417 +485,70 @@ modsum.len.bcc.w
 
 dnames <- c("LGD","LGSD","LMD","IHD","MCD","JDD","BVD","BVCC")
 
-tab1.w <- data.frame(Species=rep("Steelhead",8), Type=rep("W", 8), Dam=dnames, 
-  n = c(length(modsum.len.lgr.w$resid),
-    length(modsum.len.lgs.w$resid),
-    length(modsum.len.lmn.w$resid),
-    length(modsum.len.ihr.w$resid),
-    length(modsum.len.mcn.w$resid),
-    length(modsum.len.jda.w$resid),
-    length(modsum.len.bon.w$resid),
-    length(modsum.len.bcc.w$resid) ),
-  round(rbind(extractCI(modsum.len.lgr.w, "zlength", scale="log.odds"),
-    extractCI(modsum.len.lgs.w, "zlength", scale="log.odds"),
-    extractCI(modsum.len.lmn.w, "zlength", scale="log.odds"),
-    extractCI(modsum.len.ihr.w, "zlength", scale="log.odds"),
-    extractCI(modsum.len.mcn.w, "zlength", scale="log.odds"),
-    extractCI(modsum.len.jda.w, "zlength", scale="log.odds"),
-    extractCI(modsum.len.bon.w, "zlength", scale="log.odds"),
-    extractCI(modsum.len.bcc.w, "zlength", scale="log.odds") ),3 ),
-  dAIC=c(round(modsum.len.lgr.w$AIC[1] - aicsum.cov.lgr.w$AIC[1], 1),
-    round(modsum.len.lgs.w$AIC[1] - aicsum.cov.lgs.w$AIC[1], 1),
-    round(modsum.len.lmn.w$AIC[1] - aicsum.cov.lmn.w$AIC[1], 1),
-    round(modsum.len.ihr.w$AIC[1] - aicsum.cov.ihr.w$AIC[1], 1),
-    round(modsum.len.mcn.w$AIC[1] - aicsum.cov.mcn.w$AIC[1], 1),
-    round(modsum.len.jda.w$AIC[1] - aicsum.cov.jda.w$AIC[1], 1),
-    round(modsum.len.bon.w$AIC[1] - aicsum.cov.bon.w$AIC[1], 1),
-    round(modsum.len.bcc.w$AIC[1] - aicsum.cov.bcc.w$AIC[1], 1) ) ,
-  pvalue=c(round(modsum.len.lgr.w$coef["zlength", 4], 4),
-    round(modsum.len.lgs.w$coef["zlength", 4], 4),
-    round(modsum.len.lmn.w$coef["zlength", 4], 4),
-    round(modsum.len.ihr.w$coef["zlength", 4], 4),
-    round(modsum.len.mcn.w$coef["zlength", 4], 4),
-    round(modsum.len.jda.w$coef["zlength", 4], 4),
-    round(modsum.len.bon.w$coef["zlength", 4], 4),
-    round(modsum.len.bcc.w$coef["zlength", 4], 4) ) 
+tab1 <- data.frame(Species=rep("Steelhead",8), Dam=dnames, 
+  n = c(length(modsum.best.lgr$resid),
+    length(modsum.best.lgs$resid),
+    length(modsum.best.lmn$resid),
+    length(modsum.best.ihr$resid),
+    length(modsum.best.mcn$resid),
+    length(modsum.best.jda$resid),
+    length(modsum.best.bon$resid),
+    length(modsum.best.bcc$resid) ),
+  round(rbind(extractCI(modsum.best.lgr, "zlength", scale="log.odds"),
+    extractCI(modsum.best.lgs, "zlength", scale="log.odds"),
+    extractCI(modsum.best.lmn, "zlength", scale="log.odds"),
+    extractCI(modsum.best.ihr, "zlength", scale="log.odds"),
+    extractCI(modsum.best.mcn, "zlength", scale="log.odds"),
+    extractCI(modsum.best.jda, "zlength", scale="log.odds"),
+    extractCI(modsum.best.bon, "zlength", scale="log.odds"),
+    extractCI(modsum.best.bcc, "zlength", scale="log.odds") ),3 ),
+  dAIC=c(round(modsum.best.lgr$AIC[1] - modsum.nolen.lgr$AIC[1], 1),
+    round(modsum.best.lgs$AIC[1] - modsum.nolen.lgs$AIC[1], 1),
+    round(modsum.best.lmn$AIC[1] - modsum.nolen.lmn$AIC[1], 1),
+    round(modsum.best.ihr$AIC[1] - modsum.nolen.ihr$AIC[1], 1),
+    round(modsum.best.mcn$AIC[1] - modsum.nolen.mcn$AIC[1], 1),
+    round(modsum.best.jda$AIC[1] - modsum.nolen.jda$AIC[1], 1),
+    round(modsum.best.bon$AIC[1] - modsum.nolen.bon$AIC[1], 1),
+    round(modsum.best.bcc$AIC[1] - modsum.nolen.bcc$AIC[1], 1) ) ,
+  pvalue=c(round(modsum.best.lgr$coef["zlength", 4], 4),
+    round(modsum.best.lgs$coef["zlength", 4], 4),
+    round(modsum.best.lmn$coef["zlength", 4], 4),
+    round(modsum.best.ihr$coef["zlength", 4], 4),
+    round(modsum.best.mcn$coef["zlength", 4], 4),
+    round(modsum.best.jda$coef["zlength", 4], 4),
+    round(modsum.best.bon$coef["zlength", 4], 4),
+    round(modsum.best.bcc$coef["zlength", 4], 4) ) 
 )
 
-names(tab1.w)[5:7] <- c("Estimate", "95%CI.L", "95%CI.U")
+names(tab1)[4:6] <- c("Estimate", "95%CI.L", "95%CI.U")
 
-tab1.w
+tab1
 
-
-
-## ------------------------------------------
-##     Create Summary for Table A3 
-## ------------------------------------------
-
-tabA3.w <- data.frame(Species=rep("Steelhead",8), Type=rep("W", 8), Dam=dnames, 
-  modform=c(aicsum.cov.lgr.w$ModelForm[1],
-    aicsum.cov.lgs.w$ModelForm[1],
-    aicsum.cov.lmn.w$ModelForm[1],
-    aicsum.cov.ihr.w$ModelForm[1],
-    aicsum.cov.mcn.w$ModelForm[1],
-    aicsum.cov.jda.w$ModelForm[1],
-    aicsum.cov.bon.w$ModelForm[1],
-    aicsum.cov.bcc.w$ModelForm[1])
-)
-
-tabA3.w
-
-
-
-###----------------------------------------------------------------------------------------------------
-##               Hatchery Fish (clipped)
-###----------------------------------------------------------------------------------------------------
-
-###--------------------------------------------------
-##        Lower Granite Dam 
-###--------------------------------------------------
-
-idam <- which(damsets=="LGR")
-
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.lgr.h <- fitModels(covsets, respsets[idam], sdat, subsets[[1]] & sdat$clipped=="a. yes")
-
-# check if any models did not converge (any non-zero)
-modfits.cov.lgr.h$converge  
-# all are fine
-
-# Calculate AIC
-aicsum.cov.lgr.h <- getAICsummary(modfits.cov.lgr.h, covsets)
-aicsum.cov.lgr.h
-
-# find best model
-bestmod.cov.lgr.h <- aicsum.cov.lgr.h$Model[1]
-
-# -------   Fit model with length -------------------------------------
-
-tmpset <- paste("zlength + ", covsets[bestmod.cov.lgr.h])
-modfit.len.lgr.h <- fitModels(tmpset, respsets[idam], sdat, subsets[[1]] & sdat$clipped=="a. yes")
-modfit.len.lgr.h$converge 
-
-modsum.len.lgr.h <- summary(modfit.len.lgr.h[[1]])
-modsum.len.lgr.h
-
-
-
-###--------------------------------------------------
-##        Little Goose Dam 
-###--------------------------------------------------
-
-idam <- which(damsets=="LGS")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.lgs.h <- fitModels(covsets, respsets[idam], sdat, sdat$clipped=="a. yes")
-
-# check if any models did not converge (any non-zero)
-modfits.cov.lgs.h$converge 
-# all are fine
-
-# Calculate AIC
-aicsum.cov.lgs.h <- getAICsummary(modfits.cov.lgs.h, covsets)
-aicsum.cov.lgs.h
-
-# find best model
-bestmod.cov.lgs.h <- aicsum.cov.lgs.h$Model[1]
-
-# -------   Fit model with length -------------------------------------
-
-tmpset <- paste("zlength +", covsets[bestmod.cov.lgs.h])
-modfit.len.lgs.h <- fitModels(tmpset, respsets[idam], sdat, sdat$clipped=="a. yes")
-modfit.len.lgs.h$converge
-
-modsum.len.lgs.h <- summary(modfit.len.lgs.h[[1]])
-modsum.len.lgs.h
-
-
-
-
-###--------------------------------------------------
-##        Lower Monumental Dam 
-###--------------------------------------------------
-
-idam <- which(damsets=="LMN")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.lmn.h <- fitModels(covsets, respsets[idam], sdat, sdat$clipped=="a. yes")
-
-# check if any models did not converge (any non-zero)
-modfits.cov.lmn.h$converge 
-# all are fine
-
-# Calculate AIC
-aicsum.cov.lmn.h <- getAICsummary(modfits.cov.lmn.h, covsets)
-aicsum.cov.lmn.h
-
-# find best model
-bestmod.cov.lmn.h <- aicsum.cov.lmn.h$Model[1]
-
-# -------   Fit model with length -------------------------------------
-
-tmpset <- paste("zlength +", covsets[bestmod.cov.lmn.h])
-modfit.len.lmn.h <- fitModels(tmpset, respsets[idam], sdat, sdat$clipped=="a. yes")
-modfit.len.lmn.h$converge
-modsum.len.lmn.h <- summary(modfit.len.lmn.h[[1]])
-modsum.len.lmn.h
-
-
-
-
-###--------------------------------------------------
-##        Ice Harbor Dam 
-###--------------------------------------------------
-
-idam <- which(damsets=="IHR")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.ihr.h <- fitModels(covsets, respsets[idam], sdat, sdat$clipped=="a. yes" & sdat$fyear %in% as.character(2005:2014))
-
-# check if any models did not converge (any non-zero)
-modfits.cov.ihr.h$converge
-# all are fine
-
-# Calculate AIC
-aicsum.cov.ihr.h <- getAICsummary(modfits.cov.ihr.h, covsets)
-aicsum.cov.ihr.h
-
-# find best model
-bestmod.cov.ihr.h <- aicsum.cov.ihr.h$Model[1]
-
-# -------   Fit model with length -------------------------------------
-
-tmpset <- paste("zlength +", covsets[bestmod.cov.ihr.h])
-modfit.len.ihr.h <- fitModels(tmpset, respsets[idam], sdat, sdat$clipped=="a. yes" & sdat$fyear %in% as.character(2005:2014))
-modfit.len.ihr.h$converge
-
-modsum.len.ihr.h <- summary(modfit.len.ihr.h[[1]])
-modsum.len.ihr.h
-
-
-
-
-
-###--------------------------------------------------
-##        McNary Dam 
-###--------------------------------------------------
-
-idam <- which(damsets=="MCN")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.mcn.h <- fitModels(covsets, respsets[idam], sdat, sdat$clipped=="a. yes")
-
-# check if any models did not converge (any non-zero)
-modfits.cov.mcn.h$converge 
-# all are fine
-
-# Calculate AIC
-aicsum.cov.mcn.h <- getAICsummary(modfits.cov.mcn.h, covsets)
-aicsum.cov.mcn.h
-
-# find best model
-bestmod.cov.mcn.h <- aicsum.cov.mcn.h$Model[1]
-
-# -------   Fit model with length -------------------------------------
-
-tmpset <- paste("zlength +", covsets[bestmod.cov.mcn.h])
-modfit.len.mcn.h <- fitModels(tmpset, respsets[idam], sdat, sdat$clipped=="a. yes")
-modfit.len.mcn.h$converge
-
-modsum.len.mcn.h <- summary(modfit.len.mcn.h[[1]])
-modsum.len.mcn.h
-
-
-###--------------------------------------------------
-##        John Day Dam 
-###--------------------------------------------------
-
-idam <- which(damsets=="JDA")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.jda.h <- fitModels(covsets, respsets[idam], sdat, sdat$clipped=="a. yes")
-
-# check if any models did not converge (any non-zero)
-modfits.cov.jda.h$converge 
-# all are fine
-
-# Calculate AIC
-aicsum.cov.jda.h <- getAICsummary(modfits.cov.jda.h, covsets)
-aicsum.cov.jda.h
-
-# find best model
-bestmod.cov.jda.h <- aicsum.cov.jda.h$Model[1]
-
-# -------   Fit model with length -------------------------------------
-tmpset <- paste("zlength +", covsets[bestmod.cov.jda.h])
-modfit.len.jda.h <- fitModels(tmpset, respsets[idam], sdat, sdat$clipped=="a. yes")
-modfit.len.jda.h$converge
-
-modsum.len.jda.h <- summary(modfit.len.jda.h[[1]])
-modsum.len.jda.h
-
-
-
-###--------------------------------------------------
-##        Bonneville Dam 
-###--------------------------------------------------
-
-idam <- which(damsets=="BON")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.bon.h <- fitModels(covsets, respsets[idam], sdat, subsets[[2]] & sdat$clipped=="a. yes")
-
-# check if any models did not converge (any non-zero)
-modfits.cov.bon.h$converge 
-# all are fine
-
-# Calculate AIC
-aicsum.cov.bon.h <- getAICsummary(modfits.cov.bon.h, covsets)
-aicsum.cov.bon.h
-
-# find best model
-bestmod.cov.bon.h <- aicsum.cov.bon.h$Model[1]
-
-# -------   Fit model with length -------------------------------------
-
-tmpset <- paste("zlength +", covsets[bestmod.cov.bon.h])
-modfit.len.bon.h <- fitModels(tmpset, respsets[idam], sdat, subsets[[2]] & sdat$clipped=="a. yes")
-modfit.len.bon.h$converge
-
-modsum.len.bon.h <- summary(modfit.len.bon.h[[1]])
-modsum.len.bon.h
-
-
-
-
-###--------------------------------------------------
-##        Bonneville Dam Corner Collector
-###--------------------------------------------------
-
-idam <- which(damsets=="BCC")
-# -------   Fit covariate-only models -------------------------------------
-modfits.cov.bcc.h <- fitModels(covsets, respsets[idam], sdat, subsets[[3]] & sdat$clipped=="a. yes")
-
-# check if any models did not converge (any non-zero)
-modfits.cov.bcc.h$converge
-# all are fine
-
-# Calculate AIC
-aicsum.cov.bcc.h <- getAICsummary(modfits.cov.bcc.h, covsets)
-aicsum.cov.bcc.h
-
-# find best model
-bestmod.cov.bcc.h <- aicsum.cov.bcc.h$Model[1]
-
-# -------   Fit model with length -------------------------------------
-tmpset <- paste("zlength +", covsets[bestmod.cov.bcc.h])
-modfit.len.bcc.h <- fitModels(tmpset, respsets[idam], sdat, subsets[[3]] & sdat$clipped=="a. yes")
-modfit.len.bcc.h$converge
-
-modsum.len.bcc.h <- summary(modfit.len.bcc.h[[1]])
-modsum.len.bcc.h
-
-
-## -----------------------------------------
-##     Create Summary for Table 1
-## -----------------------------------------
-
-# species, reartype, dam, n, estimate, 95%CI, dAIC, p-value
-
-dnames <- c("LGD","LGSD","LMD","IHD","MCD","JDD","BVD","BVCC")
-
-tab1.h <- data.frame(Species=rep("Steelhead",8), Type=rep("H", 8), Dam=dnames, 
-  n = c(length(modsum.len.lgr.h$resid),
-    length(modsum.len.lgs.h$resid),
-    length(modsum.len.lmn.h$resid),
-    length(modsum.len.ihr.h$resid),
-    length(modsum.len.mcn.h$resid),
-    length(modsum.len.jda.h$resid),
-    length(modsum.len.bon.h$resid),
-    length(modsum.len.bcc.h$resid) ),
-  round(rbind(extractCI(modsum.len.lgr.h, "zlength", scale="log.odds"),
-    extractCI(modsum.len.lgs.h, "zlength", scale="log.odds"),
-    extractCI(modsum.len.lmn.h, "zlength", scale="log.odds"),
-    extractCI(modsum.len.ihr.h, "zlength", scale="log.odds"),
-    extractCI(modsum.len.mcn.h, "zlength", scale="log.odds"),
-    extractCI(modsum.len.jda.h, "zlength", scale="log.odds"),
-    extractCI(modsum.len.bon.h, "zlength", scale="log.odds"),
-    extractCI(modsum.len.bcc.h, "zlength", scale="log.odds") ),3 ),
-  dAIC=c(round(modsum.len.lgr.h$AIC[1] - aicsum.cov.lgr.h$AIC[1], 1),
-    round(modsum.len.lgs.h$AIC[1] - aicsum.cov.lgs.h$AIC[1], 1),
-    round(modsum.len.lmn.h$AIC[1] - aicsum.cov.lmn.h$AIC[1], 1),
-    round(modsum.len.ihr.h$AIC[1] - aicsum.cov.ihr.h$AIC[1], 1),
-    round(modsum.len.mcn.h$AIC[1] - aicsum.cov.mcn.h$AIC[1], 1),
-    round(modsum.len.jda.h$AIC[1] - aicsum.cov.jda.h$AIC[1], 1),
-    round(modsum.len.bon.h$AIC[1] - aicsum.cov.bon.h$AIC[1], 1),
-    round(modsum.len.bcc.h$AIC[1] - aicsum.cov.bcc.h$AIC[1], 1) ) ,
-  pvalue=c(round(modsum.len.lgr.h$coef["zlength", 4], 4),
-    round(modsum.len.lgs.h$coef["zlength", 4], 4),
-    round(modsum.len.lmn.h$coef["zlength", 4], 4),
-    round(modsum.len.ihr.h$coef["zlength", 4], 4),
-    round(modsum.len.mcn.h$coef["zlength", 4], 4),
-    round(modsum.len.jda.h$coef["zlength", 4], 4),
-    round(modsum.len.bon.h$coef["zlength", 4], 4),
-    round(modsum.len.bcc.h$coef["zlength", 4], 4) ) 
-)
-
-names(tab1.h)[5:7] <- c("Estimate", "95%CI.L", "95%CI.U")
-
-tab1.h
-
-
-tab1 <- rbind(tab1.h, tab1.w)
 
 write.csv(tab1, file="output/steelhead_Table1_values.csv", quote=F, row.names=F)
 
 
+
+
+
 ## ------------------------------------------
 ##     Create Summary for Table A3 
 ## ------------------------------------------
 
-tabA3.h <- data.frame(Species=rep("Steelhead",8), Type=rep("H", 8), Dam=dnames, 
-  modform=c(aicsum.cov.lgr.h$ModelForm[1],
-    aicsum.cov.lgs.h$ModelForm[1],
-    aicsum.cov.lmn.h$ModelForm[1],
-    aicsum.cov.ihr.h$ModelForm[1],
-    aicsum.cov.mcn.h$ModelForm[1],
-    aicsum.cov.jda.h$ModelForm[1],
-    aicsum.cov.bon.h$ModelForm[1],
-    aicsum.cov.bcc.h$ModelForm[1])
+tabA3 <- data.frame(Species=rep("Steelhead",8),  Dam=dnames, 
+  modform=c(aicsum.lgr$ModelForm[1],
+    aicsum.lgs$ModelForm[1],
+    aicsum.lmn$ModelForm[1],
+    aicsum.ihr$ModelForm[1],
+    aicsum.mcn$ModelForm[1],
+    aicsum.jda$ModelForm[1],
+    aicsum.bon$ModelForm[1],
+    aicsum.bcc$ModelForm[1])
 )
 
-tabA3.h
-
-tabA3 <- rbind(tabA3.h, tabA3.w)
-
+tabA3
 
 write.csv(tabA3, file="output/steelhead_TableA3_values.csv", quote=F, row.names=F)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

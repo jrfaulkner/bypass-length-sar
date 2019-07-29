@@ -3,6 +3,9 @@
 ## Faulkner, JR, BL Bellerud, DL Widener, and RW Zabel. 2019. Associations among fish length, dam passage history, and survival to adulthood in two at-risk species of Pacific salmon.
 
 
+## !!! NOTE: it is not recommended to simply source this file. There is code for simulations following the code for model fitting.
+##  The code for simulations may take days to run.
+
 
 # These packages need to be installed and loaded
 library(lme4)
@@ -37,11 +40,64 @@ sdat.lgr$fyear <- as.factor(sdat.lgr$year)
 
 ### ----  Functions ---------------------------------
 
+
+# function to fit a set of models and output to a list
+fitModels <- function(modset, resp="adult_return", data, subset=NULL){
+  nm <- length(modset)
+  convec <- numeric(nm)
+  outlist <- list()
+  for (kk in 1:nm) {
+    cat("fitting model: ", kk, " of ", nm, "\n" )
+    tmp.form <- formula(paste(resp, "~ ", modset[kk] ))
+    tmp.fit <- glmer(tmp.form, family=binomial, data=data, subset=subset, control=glmerControl(optCtrl=list(maxfun=2e5)) )
+    if (length(tmp.fit@optinfo$conv$lme4)==0) convec[kk] <- 0
+    if (length(tmp.fit@optinfo$conv$lme4)!=0) {
+			if (length(grep(x=tmp.fit@optinfo$conv$lme4$messages, pattern="singular"))==1) convec[kk] <- 1
+			if (length(grep(x=tmp.fit@optinfo$conv$lme4$messages, pattern="singular"))==0) convec[kk] <- tmp.fit@optinfo$conv$lme4$code
+		}
+    outlist[[kk]] <- tmp.fit 
+    # if did not converge, try to refit from new start
+    if (convec[kk]!=0) {
+      cat("re-fitting model: ", kk, " of ", nm, "\n" )
+      tmp.ss <- getME(tmp.fit,c("theta","fixef"))
+      tmp.fit2 <- update(tmp.fit,start=tmp.ss,control=glmerControl(optCtrl=list(maxfun=2e5)) )
+      if (length(tmp.fit2@optinfo$conv$lme4)==0) convec[kk] <- 0
+	    if (length(tmp.fit2@optinfo$conv$lme4)!=0) {
+				if (length(grep(x=tmp.fit2@optinfo$conv$lme4$messages, pattern="singular"))==1) convec[kk] <- 1
+				if (length(grep(x=tmp.fit2@optinfo$conv$lme4$messages, pattern="singular"))==0)	convec[kk] <- tmp.fit2@optinfo$conv$lme4$code
+			}
+      outlist[[kk]] <- tmp.fit2 
+    }
+    # if still did not converge, try to refit with different optimizer
+    if (convec[kk]!=0) {
+      cat("re-fitting model: ", kk, " of ", nm, "\n" )
+      tmp.ss2 <- getME(tmp.fit2,c("theta","fixef"))
+      tmp.fit3 <- update(tmp.fit2,start=tmp.ss2,control=glmerControl(optimizer="bobyqa",optCtrl=list(maxfun=2e5)))
+      if (length(tmp.fit3@optinfo$conv$lme4)==0) convec[kk] <- 0
+	    if (length(tmp.fit3@optinfo$conv$lme4)!=0) {
+				if (length(grep(x=tmp.fit3@optinfo$conv$lme4$messages, pattern="singular"))==1) convec[kk] <- 1
+				if (length(grep(x=tmp.fit3@optinfo$conv$lme4$messages, pattern="singular"))==0)	convec[kk] <- tmp.fit3@optinfo$conv$lme4$code
+			}
+      outlist[[kk]] <- tmp.fit3 
+    }
+    if (convec[kk]!=0) cat("2nd re-fit of model ", kk, " failed!", "\n" )
+  }
+ outlist$converge <- convec
+ return(outlist)
+}
+
+
+
 ## Function to create table of AIC ranks and other stats
-getAICsummary <- function(fit.list, mod.list, modnums=NULL) {
-  nmod <- length(fit.list)-1
-  if (is.null(modnums)) modnums <- 1:nmod
-  aicv1 <- as.vector((sapply(fit.list[1:nmod], FUN=extractAIC))[2,])  #extract aic
+getAICsummary <- function(fit.list, mod.list, subset=NULL) {
+	nmod <- length(fit.list)-1
+	modnums <- 1:nmod
+	if (!is.null(subset)) {
+		modnums <- modnums[subset]
+		nmod <- length(modnums)
+		mod.list <- mod.list[subset]
+	}
+	aicv1 <- as.vector((sapply(fit.list[modnums], FUN=extractAIC))[2,])   #extract aic
   minaic1 <- min(aicv1)	#min aic
   delta1 <- aicv1 - minaic1	#delta aic
   mod.lik1 <- exp(-0.5*delta1)	#likelihood of model
@@ -89,30 +145,18 @@ extractCI <- function(modsum, varname, scale="odds", alpha=0.05){
 # note: all models have Y and C
 
 # ULGR models
-# 1) Y + C
-# 2) Y + C + D
-# 3) Y + C + D + D2
-# 4) Y + C + R
-# 5) Y + C + S
-# 6) Y + C + D + R
-# 7) Y + C + D + S
-# 8) Y + C + D + D2 + R
-# 9) Y + C + D + D2 + S
-# 10) Y + C + R + S
-# 11) Y + C + D + R + S
-# 12) Y + C + D + D2 + R + S
-# 13) Y + C + D + Y*D
-# 14) Y + C + D + D2 + Y*D
-# 15) Y + C + D + D2 + Y*D + Y*D2
-# 16) Y + C + D + R + Y*D
-# 17) Y + C + D + S + Y*D
-# 18) Y + C + D + D2 + R + Y*D 
-# 19) Y + C + D + D2 + R + Y*D + Y*D2
-# 20) Y + C + D + D2 + S + Y*D 
-# 21) Y + C + D + D2 + S + Y*D + Y*D2
-# 22) Y + C + D + R + S + Y*D
-# 23) Y + C + D + D2 + R + S + Y*D 
-# 24) Y + C + D + D2 + R + S + Y*D + Y*D2
+# 1) Y + C + R
+# 2) Y + C + R + D
+# 3) Y + C + R + D + D2
+# 4) Y + C + R + S
+# 5) Y + C + R + D + S
+# 6) Y + C + R + D + D2 + S
+# 7) Y + C + R + D + Y*D
+# 8) Y + C + R + D + D2 + Y*D
+# 9) Y + C + R + D + D2 + Y*D + Y*D2
+# 10) Y + C + R + D + S + Y*D
+# 11) Y + C + R + D + D2 + S + Y*D 
+# 12) Y + C + R + D + D2 + S + Y*D + Y*D2
 
 
 # LGR models
@@ -140,30 +184,19 @@ extractCI <- function(modsum, varname, scale="odds", alpha=0.05){
 # cov + L + NC
 
 
-covsets.ulgr <- c("clipped + (1 | fyear)",
-  "clipped + zlast_day + (1 | fyear)",   
-  "clipped + zlast_day + zlast_day_sq + (1 | fyear)",
-  "clipped + rel_site2 + (1 | fyear)",
-  "clipped + last_site + (1 | fyear)", 
-  "clipped + zlast_day + rel_site2 + (1 | fyear)",
-  "clipped + zlast_day + last_site + (1 | fyear)",
-  "clipped + zlast_day + zlast_day_sq + rel_site2 + (1 | fyear)",
-  "clipped + zlast_day + zlast_day_sq + last_site + (1 | fyear)",
-  "clipped + rel_site2 + last_site + (1 | fyear)", 
-  "clipped + zlast_day + rel_site2 + last_site + (1 | fyear)", 
-  "clipped + zlast_day + zlast_day_sq + rel_site2 + last_site + (1 | fyear)", 
-  "clipped + zlast_day + (zlast_day | fyear)",   
-  "clipped + zlast_day + zlast_day_sq + (zlast_day | fyear)",   
-  "clipped + zlast_day + zlast_day_sq + (zlast_day + zlast_day_sq | fyear)",   
-  "clipped + zlast_day + rel_site2 + (zlast_day | fyear)",   
-  "clipped + zlast_day + last_site + (zlast_day | fyear)",   
-  "clipped + zlast_day + zlast_day_sq + rel_site2 + (zlast_day | fyear)",   
-  "clipped + zlast_day + zlast_day_sq + rel_site2 + (zlast_day + zlast_day_sq | fyear)",   
-  "clipped + zlast_day + zlast_day_sq + last_site + (zlast_day | fyear)",   
-  "clipped + zlast_day + zlast_day_sq + last_site + (zlast_day + zlast_day_sq | fyear)",   
-  "clipped + zlast_day + rel_site2 + last_site + (zlast_day | fyear)", 
-  "clipped + zlast_day + zlast_day_sq + rel_site2 + last_site + (zlast_day | fyear)", 
-  "clipped + zlast_day + zlast_day_sq + rel_site2 + last_site + (zlast_day + zlast_day_sq  | fyear)")
+
+covsets.ulgr <- c("clipped + rel_site2 + (1 | fyear)",
+	  "clipped + rel_site2 + zlast_day + (1 | fyear)",   
+	  "clipped + rel_site2 + zlast_day + zlast_day_sq + (1 | fyear)",
+	  "clipped + rel_site2 + last_site + (1 | fyear)", 
+	  "clipped + rel_site2 + zlast_day + last_site + (1 | fyear)",
+	  "clipped + rel_site2 + zlast_day + zlast_day_sq + last_site + (1 | fyear)",
+	  "clipped + rel_site2 + zlast_day + (zlast_day | fyear)",   
+	  "clipped + rel_site2 + zlast_day + zlast_day_sq + (zlast_day | fyear)",   
+	  "clipped + rel_site2 + zlast_day + zlast_day_sq + (zlast_day + zlast_day_sq | fyear)",   
+	  "clipped + rel_site2 + zlast_day + last_site + (zlast_day | fyear)",   
+	  "clipped + rel_site2 + zlast_day + zlast_day_sq + last_site + (zlast_day | fyear)",   
+	  "clipped + rel_site2 + zlast_day + zlast_day_sq + last_site + (zlast_day + zlast_day_sq | fyear)") 
 
 
 covsets.lgr <- c("clipped + (1 | fyear)",
@@ -180,11 +213,15 @@ covsets.lgr <- c("clipped + (1 | fyear)",
   "clipped + zlast_day + zlast_day_sq + last_site + (zlast_day + zlast_day_sq | fyear)") 
 
 
+
+
 testsets <- c("zlength", "bypassed", "nbypass_comb4", "nbypass", "zlength + bypassed", "zlength + nbypass_comb4", "zlength + nbypass")
 
 covformulas.ulgr <- covformulas.lgr <- list()
 nmods.ulgr <- length(covsets.ulgr)
 nmods.lgr <- length(covsets.lgr)
+nmods <- length(testsets)
+
 
 for (i in 1:nmods.ulgr) {
 	covformulas.ulgr[[i]] <- formula(paste("adult_return ~ ", covsets.ulgr[i] ))
@@ -197,79 +234,50 @@ for (i in 1:nmods.lgr) {
 
 
 
-###-------------------------------------------------
-##     Tagged Upstream of Lower Granite Dam
-###-------------------------------------------------
+###--------------------------------------------------------------------
+##            Tagged Upstream of Lower Granite Dam
+###--------------------------------------------------------------------
+
 
 
 ### -------   Fit Covariate-Only Models ------------
 
-modfits.cov.ulgr <- list()
-convcheck.cov.ulgr <- numeric(nmods.ulgr)
-
-for (k in 1:nmods.ulgr) {
-	cat("fitting model: ", k, " of ", nmods.ulgr, "\n" )
-	tmp.fit <- glmer(covformulas.ulgr[[k]], family=binomial, data=sdat.ulgr)
-  if (length(tmp.fit@optinfo$conv$lme4)==0) convcheck.cov.ulgr[k] <- 0
-  if (length(tmp.fit@optinfo$conv$lme4)!=0) convcheck.cov.ulgr[k] <- tmp.fit@optinfo$conv$lme4$code
-  modfits.cov.ulgr[[k]] <- tmp.fit 
-	# if did not converge, try to refit
-	if (convcheck.cov.ulgr[k]!=0) {
-		cat("re-fitting model: ", k, " of ", nmods.ulgr, "\n" )
-		tmp.ss <- getME(tmp.fit,c("theta","fixef"))
-		tmp.fit2 <- update(tmp.fit,start=tmp.ss,control=glmerControl(optCtrl=list(maxfun=2e4)))
-	  if (length(tmp.fit2@optinfo$conv$lme4)==0) convcheck.cov.ulgr[k] <- 0
-	  if (length(tmp.fit2@optinfo$conv$lme4)!=0) convcheck.cov.ulgr[k] <- tmp.fit2@optinfo$conv$lme4$code
-	  modfits.cov.ulgr[[k]] <- tmp.fit2 
-	}
-}
+modfits.cov.ulgr <- fitModels(covsets.ulgr, resp="adult_return", sdat.ulgr)
 
 
 # check if any models did not converge (any non-zero)
-convcheck.cov.ulgr
+modfits.cov.ulgr$converge 
 # all are fine
 
 # Calculate AIC
-aicsum.cov.ulgr <- getAICsummary(modfits.cov.ulgr, covsets.ulgr)
+aicsum.cov.ulgr <- getAICsummary(modfits.cov.ulgr, covsets.ulgr, subset = modfits.cov.ulgr$converge==0)
+aicsum.cov.ulgr
+
+
 
 # find best model
 bestmod.cov.ulgr <- aicsum.cov.ulgr$Model[1]
+modfit.best.cov.ulgr <- modfits.cov.ulgr[[bestmod.cov.ulgr]]
+modsum.best.cov.ulgr <- summary(modfit.best.cov.ulgr)
+modsum.best.cov.ulgr
 
 
 ## --------- Fit length and bypass models ------------------------
 
-# Make model formulas for bypass and length models
-formulas.ulgr <- list()
-nmods <- length(testsets)
-for (i in 1:nmods) {
-  formulas.ulgr[[i]] <- 	formula(paste("adult_return ~ ", testsets[i],  "+", covsets.ulgr[bestmod.cov.ulgr] ))
-}
 
-modfits.ulgr <- list()
-modfits.ulgr[[1]] <- modfits.cov.ulgr[[bestmod.cov.ulgr]]
-convcheck.ulgr <- numeric(nmods+1)
+modsets.ulgr <- paste(testsets, "+", covsets.ulgr[bestmod.cov.ulgr] )
 
-for (k in 1:nmods) {
-	cat("fitting model: ", k, " of ", nmods, "\n" )
-	tmp.fit <- glmer(formulas.ulgr[[k]], family=binomial, data=sdat.ulgr)
-  if (length(tmp.fit@optinfo$conv$lme4)==0) convcheck.ulgr[k+1] <- 0
-  if (length(tmp.fit@optinfo$conv$lme4)!=0) convcheck.ulgr[k+1] <- tmp.fit@optinfo$conv$lme4$code
-  modfits.ulgr[[k+1]] <- tmp.fit 
-	# if did not converge, try to refit
-	if (convcheck.ulgr[k+1]!=0) {
-		cat("re-fitting model: ", k, " of ", nmods, "\n" )
-		tmp.ss <- getME(tmp.fit,c("theta","fixef"))
-		tmp.fit2 <- update(tmp.fit,start=tmp.ss,control=glmerControl(optCtrl=list(maxfun=2e4)))
-	  if (length(tmp.fit2@optinfo$conv$lme4)==0) convcheck.ulgr[k+1] <- 0
-	  if (length(tmp.fit2@optinfo$conv$lme4)!=0) convcheck.ulgr[k+1] <- tmp.fit2@optinfo$conv$lme4$code
-	  modfits.ulgr[[k+1]] <- tmp.fit2 
-	}
-}
-
+modfits.ulgr1 <- fitModels(modsets.ulgr, resp="adult_return", sdat.ulgr)
 
 # check if any models did not converge (any non-zero)
-convcheck.ulgr
-# all are fine
+modfits.ulgr1$converge 
+
+# add best covariate model to list
+modfits.ulgr <- list()
+modfits.ulgr[[1]] <- modfits.cov.ulgr[[bestmod.cov.ulgr]]
+for (k in 1:length(modfits.ulgr1)) {
+	modfits.ulgr[[k+1]] <- modfits.ulgr1[[k]] 
+}
 
 # Calculate AIC
 aicsum.ulgr <- getAICsummary(modfits.ulgr, c("cov", paste("cov +", testsets ) ) )
@@ -311,83 +319,51 @@ extractCI(modsums.ulgr[[8]], "nbypass")
 
 
 
-###-------------------------------------------------
-##     Tagged at Lower Granite Dam
-###-------------------------------------------------
+
+###-----------------------------------------------------------------------------
+##                  Tagged at Lower Granite Dam
+###-----------------------------------------------------------------------------
 
 
 ### -------   Fit Covariate-Only Models ------------
 
-modfits.cov.lgr <- list()
-convcheck.cov.lgr <- numeric(nmods.lgr)
-
-for (k in 1:nmods.lgr) {
-	cat("fitting model: ", k, " of ", nmods.lgr, "\n" )
-	tmp.fit <- glmer(covformulas.lgr[[k]], family=binomial, data=sdat.lgr)
-  if (length(tmp.fit@optinfo$conv$lme4)==0) convcheck.cov.lgr[k] <- 0
-  if (length(tmp.fit@optinfo$conv$lme4)!=0) convcheck.cov.lgr[k] <- tmp.fit@optinfo$conv$lme4$code
-  modfits.cov.lgr[[k]] <- tmp.fit 
-	# if did not converge, try to refit
-	if (convcheck.cov.lgr[k]!=0) {
-		cat("re-fitting model: ", k, " of ", nmods.lgr, "\n" )
-		tmp.ss <- getME(tmp.fit,c("theta","fixef"))
-		tmp.fit2 <- update(tmp.fit,start=tmp.ss,control=glmerControl(optCtrl=list(maxfun=2e4)))
-	  if (length(tmp.fit2@optinfo$conv$lme4)==0) convcheck.cov.lgr[k] <- 0
-	  if (length(tmp.fit2@optinfo$conv$lme4)!=0) convcheck.cov.lgr[k] <- tmp.fit2@optinfo$conv$lme4$code
-	  modfits.cov.lgr[[k]] <- tmp.fit2 
-	}
-}
+modfits.cov.lgr <- fitModels(covsets.lgr, resp="adult_return", sdat.lgr)
 
 
 # check if any models did not converge (any non-zero)
-convcheck.cov.lgr
-badmods.cov.lgr <- which(convcheck.cov.lgr!=0)
-
-modfits.cov.lgr2 <- modfits.cov.lgr[-badmods.cov.lgr] 
-covsets.lgr2 <- covsets.lgr[-badmods.cov.lgr]
+modfits.cov.lgr$converge 
+# note that models 9 and 12 failed to converge
 
 # Calculate AIC
-aicsum.cov.lgr <- getAICsummary(modfits.cov.lgr2, covsets.lgr2)
+aicsum.cov.lgr <- getAICsummary(modfits.cov.lgr, covsets.lgr, subset = modfits.cov.lgr$converge==0)
+aicsum.cov.lgr
+
 
 # find best model
 bestmod.cov.lgr <- aicsum.cov.lgr$Model[1]
+modfit.best.cov.lgr <- modfits.cov.lgr[[bestmod.cov.lgr]]
+modsum.best.cov.lgr <- summary(modfit.best.cov.lgr)
+modsum.best.cov.lgr
+
 
 
 
 ## --------- Fit length and bypass models ------------------------
 
-# Make model formulas for bypass and length models
-formulas.lgr <- list()
-nmods <- length(testsets)
-for (i in 1:nmods) {
-  formulas.lgr[[i]] <- 	formula(paste("adult_return ~ ", testsets[i],  "+", covsets.lgr2[bestmod.cov.lgr] ))
-}
 
-modfits.lgr <- list()
-modfits.lgr[[1]] <- modfits.cov.lgr2[[bestmod.cov.lgr]]
-convcheck.lgr <- numeric(nmods+1)
+modsets.lgr <- paste(testsets, "+", covsets.lgr[bestmod.cov.lgr] )
 
-for (k in 1:nmods) {
-	cat("fitting model: ", k, " of ", nmods, "\n" )
-	tmp.fit <- glmer(formulas.lgr[[k]], family=binomial, data=sdat.lgr)
-  if (length(tmp.fit@optinfo$conv$lme4)==0) convcheck.lgr[k+1] <- 0
-  if (length(tmp.fit@optinfo$conv$lme4)!=0) convcheck.lgr[k+1] <- tmp.fit@optinfo$conv$lme4$code
-  modfits.lgr[[k+1]] <- tmp.fit 
-	# if did not converge, try to refit
-	if (convcheck.lgr[k+1]!=0) {
-		cat("re-fitting model: ", k, " of ", nmods, "\n" )
-		tmp.ss <- getME(tmp.fit,c("theta","fixef"))
-		tmp.fit2 <- update(tmp.fit,start=tmp.ss,control=glmerControl(optCtrl=list(maxfun=2e4)))
-	  if (length(tmp.fit2@optinfo$conv$lme4)==0) convcheck.lgr[k+1] <- 0
-	  if (length(tmp.fit2@optinfo$conv$lme4)!=0) convcheck.lgr[k+1] <- tmp.fit2@optinfo$conv$lme4$code
-	  modfits.lgr[[k+1]] <- tmp.fit2 
-	}
-}
-
+modfits.lgr1 <- fitModels(modsets.lgr, resp="adult_return", sdat.lgr)
 
 # check if any models did not converge (any non-zero)
-convcheck.lgr
-# all are fine
+modfits.lgr1$converge 
+
+# add best covariate model to list
+modfits.lgr <- list()
+modfits.lgr[[1]] <- modfits.cov.lgr[[bestmod.cov.lgr]]
+for (k in 1:length(modfits.lgr1)) {
+	modfits.lgr[[k+1]] <- modfits.lgr1[[k]] 
+}
 
 # Calculate AIC
 aicsum.lgr <- getAICsummary(modfits.lgr, c("cov", paste("cov +", testsets ) ) )
