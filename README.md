@@ -1,5 +1,5 @@
 # bypass-length-sar
-This repository holds the data and R code used in analyses to support Faulkner et al. (2019).
+This repository holds the data and R code used in analyses to support Faulkner et al. (2019) and Faulkner et al. (2020).
 
 ## Data
 There are two data sets used for the analyses on bypass probabilities and there are four data sets used for the analyses on smolt-to-adult returns (SAR).  These data were also used in the formal Response to Comment on the paper.
