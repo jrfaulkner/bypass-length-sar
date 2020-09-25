@@ -20,6 +20,7 @@ The following scripts were used for analyses in the main paper:
 The following scripts were used for analyses and plots in the response to comment:
 * `chinook_power_simulations.r` - simulations to produce power estimates for Chinook used in Figure 2 and Table 1
 * `steelhead_power_simulations.r`  - simulations to produce power estimates for steelhead used in Figure 2 and Table 1
+* `adult_return_pred_for_response_fig1.r` - code to generate adult return probability predictions in Figure 1
 * `chinook_lgs_bypass_response_fig3.r` - code to generate bypass probability predictions in Figure 3 
 
 ## References
