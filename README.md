@@ -14,8 +14,8 @@ There are two data sets used for the analyses on bypass probabilities and there 
 The following scripts were used for analyses in the main paper:
 * `chinook_bypass_analysis.r` - model fitting and selection for bypass probabilities for Chinook
 * `steelhead_bypass_analysis.r` - model fitting and selection for bypass probabilities for steelhead
-* `chinook_sar_analysis.r` - model fitting and selection for adult return probabilities for Chinook
-* `steelhead_sar_analysis.r` - model fitting and selection for adult return probabilities for steelhead
+* `chinook_sar_analysis.r` - model fitting and selection and simulations for adult return probabilities for Chinook
+* `steelhead_sar_analysis.r` - model fitting and selection and simulations for adult return probabilities for steelhead
 
 The following scripts were used for analyses and plots in the response to comment:
 * `chinook_power_simulations.r` - simulations to produce power estimates for Chinook used in Figure 2 and Table 1
