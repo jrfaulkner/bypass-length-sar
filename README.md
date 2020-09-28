@@ -9,6 +9,11 @@ There are two data sets used for the analyses on bypass probabilities and there 
 * `chinook_LGR_SAR_data.csv` - adult return data and covariates for Chinook tagged at Lower Granite Dam
 * `steelhead_ULGR_SAR_data.csv` - adult return data and covariates for steelhead tagged upstream of Lower Granite Dam
 * `steelhead_LGR_SAR_data.csv` - adult return data and covariates for steelhead tagged at Lower Granite Dam
+* `steelhead_LGR_SAR_data.csv` - adult return data and covariates for steelhead tagged at Lower Granite Dam
+
+The following data sets were only used in the response to comment:
+* `annual_freshwater_variables.csv` - annual summaries of freshwater variables
+* `ocean_indicators.csv` - annual variables for ocean conditions
 
 ## R Code
 The following scripts were used for analyses in the main paper:
@@ -22,6 +27,7 @@ The following scripts were used for analyses and plots in the response to commen
 * `steelhead_power_simulations.r`  - simulations to produce power estimates for steelhead used in Figure 2 and Table 1
 * `adult_return_pred_for_response_fig1.r` - code to generate adult return probability predictions in Figure 1
 * `chinook_lgs_bypass_response_fig3.r` - code to generate bypass probability predictions in Figure 3 
+* `ocean_variable_correlations.r` - code to calculate correlations among annual summary variables in Table 2
 
 ## References
 Faulkner, JR, BL Bellerud, DL Widener, and RW Zabel. 2019. Associations among fish length, dam passage history, and survival to adulthood in two at-risk species of Pacific salmon. Transactions of the American Fisheries Society 148:1069-1087.
